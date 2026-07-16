@@ -15,7 +15,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: show payload
         env:
+          EVENT_ACTION: ${{ github.event.action }}
           PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
-          echo "event action: ${GITHUB_EVENT_ACTION}"
+          echo "event action: ${EVENT_ACTION}"
           echo "payload: ${PAYLOAD}"
