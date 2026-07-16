@@ -9,21 +9,25 @@ must **immediately** (true push, no polling cron) trigger a GitHub Actions workf
 - **Tutor mode, do NOT one-shot.** The agent provides copy-pasteable code blocks + Bash
   commands and explains what each does; the **user runs everything themselves** (they're
   learning). Proceed to the next step only after the user confirms the phase checkpoint.
-- User works in **Git Bash** (`~/Projects/drive-ci-lab`). Authoring files: prefer an editor
-  (`code <file>`); heredocs/sed already covered as automation tools, not for daily editing.
+- User works in **WSL2 Ubuntu** (`~/Projects/drive-ci-lab`), stock apt tool versions
+  (e.g. `gh` 2.45 — its `run view --log` is silently broken; use `--json` fields or
+  `gh api .../logs` + `unzip -p` instead). Adapt commands to the installed tooling; do not
+  propose tool upgrades/detours. Authoring files: prefer an editor (`code <file>`).
+- **Break down every command** part by part: what each flag does, why the modern idiom
+  looks that way, plus by-hand examples of what one-liners automate.
 - `gh` CLI installed and logged in as `anden-karlsson`.
 - User knowledge level: knows push-triggered CI basics (has a lint+test workflow in another
   repo); everything else here is new — explain, don't just instruct.
 
 ## The plan (phases; ✅ = checkpoint passed)
 
-1. **Baseline CI** — repo + `run.py --hello` stub + `.github/workflows/ci.yml` (`on: push`).
-   Checkpoint: green run in Actions tab. **← WE ARE HERE** (see status below).
+1. ✅ **Baseline CI** — repo + `run.py --hello` stub + `.github/workflows/ci.yml` (`on: push`).
+   Checkpoint: green run in Actions tab.
 2. **`repository_dispatch` + curl** — new `drive.yml` with
    `on: repository_dispatch: types: [drive-upload]` + `concurrency: {group: drive-run, cancel-in-progress: false}`;
    print `client_payload`. User creates a fine-grained PAT (repo-scoped) and fires the
    workflow with a manual `curl` POST to `/repos/anden-karlsson/drive-ci-lab/dispatches`.
-   Checkpoint: payload visible in run logs.
+   Checkpoint: payload visible in run logs. **← WE ARE HERE**
 3. **Service account + download from Drive** — GCP project, enable Drive API, service
    account + JSON key, share the Drive test folder with the SA email, repo secret
    `GDRIVE_SA_KEY`; extend `run.py` (google-api-python-client + google-auth) to download the
@@ -48,12 +52,13 @@ minimums) must be verified against docs at that phase, not asserted.
 
 ## Current status (2026-07-16)
 
-- Repo created (`gh repo create drive-ci-lab --public`), `run.py` written.
+- Phase 1 complete: pushed to `main`, run 29491020943 green, `hello from run.py` line
+  confirmed in downloaded logs (via `gh api .../logs` + `unzip -p`, since `--log` is broken
+  on gh 2.45).
 - Gotchas already hit and fixed: heredoc wrote `ci.yml` to repo root instead of
   `.github/workflows/` (fixed with `mv`); typo `checkout @v4` → `checkout@v4` (fixed with `sed`).
-- **Next action:** user runs step 1.4 —
-  `git add . && git commit -m "phase 1: baseline CI runs dummy run.py" && git push -u origin main`
-  — then confirms Checkpoint 1 (green run in Actions tab). Then start Phase 2.
+- **Next action:** Phase 2 — user authors `.github/workflows/drive.yml`
+  (`repository_dispatch`), pushes it, creates fine-grained PAT, fires curl POST.
 
 This file is part of the lab: update the status section as phases complete; delete the repo
 (and this file with it) at teardown.

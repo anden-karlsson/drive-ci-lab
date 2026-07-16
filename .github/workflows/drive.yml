@@ -1,0 +1,21 @@
+name: drive
+
+on:
+  repository_dispatch:
+    types: [drive-upload] # triggers workflow upon upload to drive. invented by me.
+
+concurrency:
+  group: ${{ github.ref }} # each branch has its own concurrency group, so that runs on different branches don't cancel each other out.
+  cancel-in-progress: false # would cancel any in-progress runs of this workflow if a new run is triggered.
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: show payload
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          echo "event action: ${GITHUB_EVENT_ACTION}"
+          echo "payload: ${PAYLOAD}"
