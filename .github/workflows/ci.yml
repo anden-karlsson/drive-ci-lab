@@ -1,0 +1,14 @@
+name: baseline # name of my CI workflow
+
+on: 
+  push: # triggers workflow on push to any branch
+
+jobs: 
+  hello:
+    runs-on: ubuntu-latest # sets up ubuntu server, latest version of it.
+    steps: 
+      - uses: actions/checkout@v4     # clones repo to server
+      - uses: actions/setup-python@v5 # installs python on server
+        with:                         # attaches to the above setup-python action
+          python-version: "3.13"      # selects python version to install
+      - run: python run.py --hello    # runs command.
