@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A throwaway lab for **learning event-driven CI by doing**: an upload to Google Drive must trigger (true push, no polling) a GitHub Actions `repository_dispatch` workflow that downloads the file and processes it with `run.py`. There is no build system, no dependencies, and no test suite — verification is checkpoint-based (observe the event chain end-to-end: upload → relay → Actions run → file downloaded).
 
-**Read `TUTORIAL.md` first.** It is the source of truth for the phase plan, current status, and next action. Keep its "Current status" section updated as phases complete.
+**Read `TUTORIAL.md` first.** It is the source of truth for the phase plan, current status, and next action. Keep its "Current status" section updated as phases complete. `STUDY.md` is the user's persistent study document (explanations, command breakdowns, by-hand examples, gotchas log) — append each phase's teaching material there as it completes, so the conversation doesn't need to carry it.
 
 ## Interaction contract (do not skip)
 

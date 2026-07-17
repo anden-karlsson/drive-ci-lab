@@ -4,6 +4,10 @@ Throwaway repo for **learning event-driven CI by doing**: uploading a file to Go
 must **immediately** (true push, no polling cron) trigger a GitHub Actions workflow that
 **downloads that file** onto the runner and processes it with a dummy `run.py`.
 
+**`STUDY.md` is the companion textbook** — all explanations, command breakdowns, by-hand
+examples, and the gotchas log live there and grow as phases complete. Keep both files
+updated: status here, study material there.
+
 ## Interaction contract (important for the assisting agent)
 
 - **Tutor mode, do NOT one-shot.** The agent provides copy-pasteable code blocks + Bash
@@ -23,16 +27,16 @@ must **immediately** (true push, no polling cron) trigger a GitHub Actions workf
 
 1. ✅ **Baseline CI** — repo + `run.py --hello` stub + `.github/workflows/ci.yml` (`on: push`).
    Checkpoint: green run in Actions tab.
-2. **`repository_dispatch` + curl** — new `drive.yml` with
+2. ✅ **`repository_dispatch` + curl** — new `drive.yml` with
    `on: repository_dispatch: types: [drive-upload]` + `concurrency: {group: drive-run, cancel-in-progress: false}`;
    print `client_payload`. User creates a fine-grained PAT (repo-scoped) and fires the
    workflow with a manual `curl` POST to `/repos/anden-karlsson/drive-ci-lab/dispatches`.
-   Checkpoint: payload visible in run logs. **← WE ARE HERE**
+   Checkpoint: payload visible in run logs.
 3. **Service account + download from Drive** — GCP project, enable Drive API, service
    account + JSON key, share the Drive test folder with the SA email, repo secret
    `GDRIVE_SA_KEY`; extend `run.py` (google-api-python-client + google-auth) to download the
    file named in the payload (or newest in folder). Checkpoint: curl-fired run downloads a
-   manually uploaded file.
+   manually uploaded file. **← WE ARE HERE**
 4. **Relay A: Pipedream (managed)** — Drive "New Files (Instant)" trigger (true push;
    Pipedream owns watch-channel renewal) → HTTP step POSTing repository_dispatch with the
    PAT, file id/name in `client_payload`. Checkpoint (milestone 1): upload → run downloads
@@ -52,13 +56,21 @@ minimums) must be verified against docs at that phase, not asserted.
 
 ## Current status (2026-07-16)
 
-- Phase 1 complete: pushed to `main`, run 29491020943 green, `hello from run.py` line
-  confirmed in downloaded logs (via `gh api .../logs` + `unzip -p`, since `--log` is broken
-  on gh 2.45).
-- Gotchas already hit and fixed: heredoc wrote `ci.yml` to repo root instead of
-  `.github/workflows/` (fixed with `mv`); typo `checkout @v4` → `checkout@v4` (fixed with `sed`).
-- **Next action:** Phase 2 — user authors `.github/workflows/drive.yml`
-  (`repository_dispatch`), pushes it, creates fine-grained PAT, fires curl POST.
+- Phases 1–2 complete. `drive.yml` on `main` uses the safe `env:` indirection for payload
+  (script-injection lesson covered); concurrency group is `${{ github.ref }}` (user's
+  informed choice — equivalent to a single lane for dispatch events).
+- Fine-grained PAT `drive-ci-lab-dispatch` created (repo-scoped, Contents: read/write,
+  expires 2026-08-15); stored locally in `.env.txt` (gitignored via `.env*`), loaded with
+  `source .env.txt` — env vars are per-shell, a 401 taught that.
+- Both curl dispatches verified in run logs (run 29538180334: `event action: drive-upload`
+  + payload). Log-fetch idiom for gh 2.45: `gh api .../runs/<id>/logs > /tmp/logs.zip &&
+  unzip -p /tmp/logs.zip | grep -A4 "event action:"`.
+- Gotchas already hit and fixed: heredoc wrote `ci.yml` to repo root (mv); `checkout @v4`
+  typo (sed); edited workflow not pushed before dispatch (runner uses `main`, not disk);
+  `.env.txt` nearly committable → `.gitignore` + name-files-explicitly-in-`git add` habit.
+- **Next action:** Phase 3 — GCP project, enable Drive API, service account + JSON key,
+  share Drive test folder with SA email, repo secret `GDRIVE_SA_KEY`, extend `run.py` to
+  download the payload-named file.
 
 This file is part of the lab: update the status section as phases complete; delete the repo
 (and this file with it) at teardown.
