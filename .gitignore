@@ -1,2 +1,15 @@
+# secrets — never commit
+# (.gitignore has NO inline comments — # only starts a comment at line start,
+#  and trailing spaces are significant, so every pattern gets its own bare line)
 .env*
+# service-account key JSON + its WSL :Zone.Identifier sidecar
 drive-ci-test*
+# any service-account key, belt-and-suspenders
+*-sa.json
+
+# python / tooling
+.venv/
+__pycache__/
+
+# lab outputs
+downloaded_*

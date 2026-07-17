@@ -13,10 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: show payload
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install google-api-python-client google-auth
+      - name: download file from Drive
         env:
-          EVENT_ACTION: ${{ github.event.action }}
-          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ vars.GDRIVE_FOLDER_ID }}
+          FILE_NAME: ${{ github.event.client_payload.file_name }}
         run: |
-          echo "event action: ${EVENT_ACTION}"
-          echo "payload: ${PAYLOAD}"
+          echo "processing: ${FILE_NAME}"
+          python run.py --download "${FILE_NAME}"

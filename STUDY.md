@@ -425,6 +425,10 @@ External HTTP request → GitHub event system → fresh VM → our data. The ske
 | curl returned `401` | dispatch refused | `DRIVE_PAT` empty in a fresh shell → env vars are per-session; `source .env.txt` in the same compound command |
 | `.env.txt` in `git status` | one `git add .` from leaking | `.gitignore` with `.env*`; add files by name |
 | `gh run list` → `503` | listing failed once | GitHub transient server error → 5xx = retry; 4xx = don't |
+| uploaded CSV "vanished" | query finds nothing; folder shows a Sheet named `test3` | Drive **auto-converted** the CSV to a Google Sheet (no binary → no `get_media`, different name) → Drive gear → Settings → uncheck "Convert uploads to Google Docs editor format", re-upload |
+| still not found after re-upload | `no file named 'test3.csv'` but file visibly there | file's real name was `test3` — **Windows Explorer hides extensions**, and Drive reports `text/csv` from content-sniffing regardless of name → rename in Drive; enable View → "File name extensions" in Explorer |
+| suspected sharing failure | (false alarm) | unshared folders DO fail silently as empty results — but the authoritative test is querying **as the SA** (diagnostic script below), not secondary views; the owner's share dialog is ground truth for the ACL |
+| SA key still `untracked` after adding to `.gitignore` | file not ignored | two separate bugs, both silent: (a) `echo`ing two patterns created one mashed line `drive-ci-test*.venv/` matching nothing; (b) **`.gitignore` has no inline comments** — `pattern  # note` is read literally, and trailing spaces are significant. Every pattern gets its own bare line; comments on their own lines. **Always verify with `git status` that the file disappears** — a dead pattern looks identical to a working one |
 
 ---
 
@@ -644,6 +648,33 @@ python run.py --download test3.csv
 Expected: `downloaded test3.csv (N bytes) -> downloaded_test3.csv`. Also test the failure
 path: `python run.py --download nope.csv; echo "exit: $?"` → ERROR line and `exit: 1`.
 Add `downloaded_*` to `.gitignore` too.
+
+**When "no file named …" strikes, debug with the robot's eyes** — a throwaway heredoc
+script that lists everything the SA can see, with exact quoted names (`!r` exposes
+missing extensions/trailing spaces):
+
+```bash
+python - <<'EOF'
+import json, os
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+creds = service_account.Credentials.from_service_account_info(
+    json.loads(os.environ["GDRIVE_SA_KEY"]),
+    scopes=["https://www.googleapis.com/auth/drive.readonly"])
+drive = build("drive", "v3", credentials=creds)
+print("SA identity:", json.loads(os.environ["GDRIVE_SA_KEY"])["client_email"])
+print("expected folder:", os.environ["GDRIVE_FOLDER_ID"])
+files = drive.files().list(pageSize=20,
+    fields="files(id,name,mimeType,parents)").execute().get("files", [])
+if not files:
+    print("SA sees NOTHING -> sharing problem (re-share with the exact SA identity above)")
+for f in files:
+    print(f"  name={f['name']!r}  parents={f.get('parents')}  {f['mimeType']}")
+EOF
+```
+
+Read it: empty → sharing; wrong `parents` → folder ID; unexpected `name` → naming
+(conversion or hidden extension — see gotchas §5).
 
 ### 3.9 Wire it into `drive.yml`
 
