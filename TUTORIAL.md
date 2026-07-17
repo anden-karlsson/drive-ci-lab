@@ -4,9 +4,10 @@ Throwaway repo for **learning event-driven CI by doing**: uploading a file to Go
 must **immediately** (true push, no polling cron) trigger a GitHub Actions workflow that
 **downloads that file** onto the runner and processes it with a dummy `run.py`.
 
-**`STUDY.md` is the companion textbook** — all explanations, command breakdowns, by-hand
-examples, and the gotchas log live there and grow as phases complete. Keep both files
-updated: status here, study material there.
+**`STUDY.md` is the lab manual the user follows on their own** — full walkthroughs for
+all phases (steps, commands broken down, code, checkpoints), plus the gotchas log. Chat is
+for when they get stuck. Keep both files updated: status here; walkthrough corrections,
+⚠ VERIFY resolutions, and new gotchas in `STUDY.md`.
 
 ## Interaction contract (important for the assisting agent)
 
