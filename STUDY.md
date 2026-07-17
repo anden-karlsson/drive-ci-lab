@@ -515,8 +515,18 @@ a workflow references them, auto-masked as `***` if they ever appear in logs.
 
 ```bash
 gh secret set GDRIVE_SA_KEY < ~/drive-ci-test-sa.json
-gh variable set GDRIVE_FOLDER_ID --body "<THE_FOLDER_ID>"
+source .env.txt && gh variable set GDRIVE_FOLDER_ID --body "${GDRIVE_FOLDER_ID}"
 ```
+
+The secret is the **entire key file as one opaque blob** — all fields, multi-line PEM and
+all. `run.py` will `json.loads()` it back; the auth library needs several fields
+(`client_email`, `private_key`, `token_uri`, …), so splitting them into separate secrets
+would just mean reassembling them by hand. One blob in, `json.loads` out.
+
+The folder ID lives in `.env.txt` as `GDRIVE_FOLDER_ID=<id>` — **same name everywhere**
+(local shell, repo variable, workflow `env:`, `os.environ` in Python) so there's no
+mapping to remember; the `source` line above sets the repo variable straight from it,
+never pasting the ID twice.
 
 - `gh secret set NAME < file` — reads the value from stdin (`<` redirection — the same
   operator that bit us in the `<ID>` gotcha, used properly this time: it feeds the file's
@@ -615,7 +625,7 @@ pip install google-api-python-client google-auth
 echo ".venv/" >> .gitignore                  # never commit an environment
 
 export GDRIVE_SA_KEY="$(cat ~/drive-ci-test-sa.json)"
-export GDRIVE_FOLDER_ID="<THE_FOLDER_ID>"
+source .env.txt && export GDRIVE_FOLDER_ID     # value comes from .env.txt; export marks it for child processes
 ```
 
 - **venv** — the standard isolation for Python deps: packages install into `.venv/`
