@@ -453,7 +453,10 @@ permissions.
 ### 3.1 Create a GCP project
 
 Browser: https://console.cloud.google.com → project picker (top bar) → **New Project** →
-name `drive-ci-lab` → Create, then make sure it's the *selected* project (picker shows it).
+name `Drive-ci-test` (the name we used) → Create, then make sure it's the *selected*
+project (picker shows it). Note the auto-generated **project ID** (lowercase, possibly
+with a number suffix, e.g. `drive-ci-test-465912`) — commands use the ID, not the display
+name.
 
 Why a project? GCP projects are isolation containers: APIs you enable, credentials you
 create, and quotas all live inside one project. A throwaway project makes teardown
@@ -471,16 +474,16 @@ opt in per project so a leaked credential can only use APIs someone deliberately
 
 Console → **IAM & Admin → Service Accounts** → **Create service account**:
 
-- Name: `drive-ci-runner` (named after its job, like the PAT).
+- Name: `drive-ci-test` (we reused the project name; SA IDs are always lowercase).
 - **Skip both optional grant steps** ("grant this SA access to project", "grant users
   access to this SA") — leave empty, click through. This is the point made above: we grant
   access via a Drive *share*, so the SA needs zero IAM roles. Least privilege again.
 
-Note the generated email: `drive-ci-runner@<project-id>.iam.gserviceaccount.com`.
+Note the generated email: `drive-ci-test@<project-id>.iam.gserviceaccount.com`.
 
 ### 3.4 Create and secure the JSON key
 
-SA list → click `drive-ci-runner` → **Keys** tab → **Add key → Create new key → JSON** →
+SA list → click `drive-ci-test` → **Keys** tab → **Add key → Create new key → JSON** →
 Create. A file downloads (Windows side; in WSL it's under `/mnt/c/Users/<you>/Downloads/`).
 
 Look inside it once (`code <file>`): `client_email` (the SA's email) and `private_key` (a
@@ -489,8 +492,8 @@ private key; Google verifies with the public half it kept. **This file IS the cr
 Move it somewhere safe and lock it down:
 
 ```bash
-mv /mnt/c/Users/<you>/Downloads/drive-ci-lab-*.json ~/drive-ci-lab-sa.json
-chmod 600 ~/drive-ci-lab-sa.json
+mv /mnt/c/Users/<you>/Downloads/drive-ci-test-*.json ~/drive-ci-test-sa.json
+chmod 600 ~/drive-ci-test-sa.json
 ```
 
 - Stored in `~`, *outside the repo* — can't be committed even without `.gitignore`.
@@ -511,7 +514,7 @@ environment, so GitHub provides **Actions secrets** — encrypted values injecte
 a workflow references them, auto-masked as `***` if they ever appear in logs.
 
 ```bash
-gh secret set GDRIVE_SA_KEY < ~/drive-ci-lab-sa.json
+gh secret set GDRIVE_SA_KEY < ~/drive-ci-test-sa.json
 gh variable set GDRIVE_FOLDER_ID --body "<THE_FOLDER_ID>"
 ```
 
@@ -611,7 +614,7 @@ source .venv/bin/activate                    # this shell now uses .venv's pytho
 pip install google-api-python-client google-auth
 echo ".venv/" >> .gitignore                  # never commit an environment
 
-export GDRIVE_SA_KEY="$(cat ~/drive-ci-lab-sa.json)"
+export GDRIVE_SA_KEY="$(cat ~/drive-ci-test-sa.json)"
 export GDRIVE_FOLDER_ID="<THE_FOLDER_ID>"
 ```
 
@@ -928,7 +931,7 @@ push-to-pull, renewal cron — and every part yours to operate. Same GitHub half
 - [ ] Delete the Cloud Function — or delete the whole GCP project
       (`gcloud projects delete <id>`), which kills function, SA, keys, and API enablement
       in one stroke
-- [ ] Delete the local SA key: `rm ~/drive-ci-lab-sa.json`
+- [ ] Delete the local SA key: `rm ~/drive-ci-test-sa.json`
 - [ ] Revoke the fine-grained PAT (`drive-ci-lab-dispatch`; auto-expires 2026-08-15)
 - [ ] Delete the Pipedream workflow and its stored Google connection + `DRIVE_PAT` env var
 - [ ] Delete `.env.txt` locally
