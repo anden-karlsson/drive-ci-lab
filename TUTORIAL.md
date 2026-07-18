@@ -37,11 +37,11 @@ for when they get stuck. Keep both files updated: status here; walkthrough corre
    account + JSON key, share the Drive test folder with the SA email, repo secret
    `GDRIVE_SA_KEY`; extend `run.py` (google-api-python-client + google-auth) to download the
    file named in the payload (or newest in folder). Checkpoint: curl-fired run downloads a
-   manually uploaded file. **← WE ARE HERE**
-4. **Relay A: Pipedream (managed)** — Drive "New Files (Instant)" trigger (true push;
+   manually uploaded file.
+4. ✅ **Relay A: Pipedream (managed)** — Drive "New Files (Instant)" trigger (true push;
    Pipedream owns watch-channel renewal) → HTTP step POSTing repository_dispatch with the
-   PAT, file id/name in `client_payload`. Checkpoint (milestone 1): upload → run downloads
-   that file within seconds; test multi-file burst + concurrency queueing.
+   PAT, file id/name in `client_payload`. Milestone 1 PASSED. **← WE ARE HERE** — still to do:
+   the multi-file **burst test** (§4.5) to observe concurrency losing events.
 5. **Relay B: self-hosted Cloud Function (the internals)** — pause Pipedream;
    `relay/main.py` (HTTP function: validate `X-Goog-Channel-Token`, ignore `sync`,
    push-to-pull via changes/files query, debounce, POST dispatch) deployed with `gcloud`;
@@ -69,9 +69,23 @@ minimums) must be verified against docs at that phase, not asserted.
 - Gotchas already hit and fixed: heredoc wrote `ci.yml` to repo root (mv); `checkout @v4`
   typo (sed); edited workflow not pushed before dispatch (runner uses `main`, not disk);
   `.env.txt` nearly committable → `.gitignore` + name-files-explicitly-in-`git add` habit.
-- **Next action:** Phase 3 — GCP project, enable Drive API, service account + JSON key,
-  share Drive test folder with SA email, repo secret `GDRIVE_SA_KEY`, extend `run.py` to
-  download the payload-named file.
+- Phase 3 complete (2026-07-18): GCP project `Drive-ci-test`, SA `drive-ci-test`, key in
+  repo secret `GDRIVE_SA_KEY`, folder id in repo var `GDRIVE_FOLDER_ID`, folder
+  `drive-ci-inbox` shared with SA. `run.py --download` works locally and in CI (run
+  29618408218 pulled test3.csv, 69593 bytes). SA key kept in-repo but gitignored
+  (`drive-ci-test*`, `*-sa.json`); local copy also at `~/drive-ci-test-sa.json`.
+  Gotchas: Drive auto-converts office uploads; Windows hides extensions; gitignore has no
+  inline comments; multi-line JSON secret over-masks braces — all in STUDY.md §5.
+- Phase 4 milestone 1 complete (2026-07-18): Pipedream "New Files (Instant)" trigger on
+  `drive-ci-inbox` → Node `code` step builds the payload → "Send any HTTP Request" POSTs
+  the dispatch (auth via header, PAT in Pipedream env `DRIVE_PAT_PIPEDREAM`, dedicated
+  fine-grained PAT `pipedream-drive-relay`). Workflow **deployed**. Real upload of
+  `Bygma AB-bokslut-2024-12.pdf` drove run 29653478535 to download it (2.6 MB, spaces in
+  name — both fine). Gotchas (all in STUDY §5): Pipedream brace-eating in JSON bodies →
+  build payload in a code step; env lives in Pipedream cloud not laptop `.env.txt`; must
+  Deploy for live uploads; step auto-named `code`; test upstream step before downstream.
+- **Next action:** Phase 4 §4.5 **burst test** — upload 3–4 files at once, watch
+  `gh run list` show the concurrency lane drop middle events (motivates Phase 5).
 
 This file is part of the lab: update the status section as phases complete; delete the repo
 (and this file with it) at teardown.

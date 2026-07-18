@@ -432,6 +432,11 @@ External HTTP request → GitHub event system → fresh VM → our data. The ske
 | CI log shows `$***FILE_NAME***` (`{`/`}` masked everywhere) | over-masking noise | `GDRIVE_SA_KEY` stored as **pretty-printed** JSON; GitHub masks multi-line secrets **line by line**, so lone `{` / `}` lines became masked values → every brace in every log becomes `***`. Cosmetic. Fix: store minified — `jq -c . ~/drive-ci-test-sa.json \| gh secret set GDRIVE_SA_KEY` |
 | log lines appeared **twice** | "did it run twice?!" | No — the logs zip stores each step in **two** members: the per-step file (`process/5_download….txt`) AND the whole-job rollup (`0_process.txt`). `unzip -p` dumps **all** members concatenated, so `grep` matches both copies (the invisible `﻿` BOM between blocks is the file seam). Timestamps were microsecond-identical + same run id → one run. Target one member: `unzip -p logs.zip "process/5_download*"` |
 | `GDRIVE_FOLDER_ID: 1wLTcLE…` fully visible in logs | "is this a leak?" | **No.** A Drive folder id is an *address, not a key* — knowing it grants no access; the folder is shared only to the SA email, and the *private key* (`GDRIVE_SA_KEY`) is what's masked. This is by design: stored as a **variable** (never masked) not a **secret** (masked). Only ever panic if the **contents of the SA key** appear unmasked. Caveat: an "anyone-with-link"–shared folder *would* make the id sensitive |
+| Pipedream: PAT stored in laptop `.env.txt`, `{{process.env…}}` empty | dispatch would 401 | **Each executor has its own env.** Pipedream runs in the *cloud* — it can't read your laptop's files. The PAT must be set in **Pipedream → Settings → Environment Variables**, not `.env.txt`. Same lesson as the per-shell 401, one layer up |
+| Pipedream HTTP body → GitHub `422 "… is not an object"` | body arrived with a **dropped `}`** | Pipedream's template engine mis-counts braces when literal JSON `{ }` and template `{{ }}` mix in a raw body → eats a closing brace. Fix: **build the object in a Node code step**, body = `{{steps.code.$return_value}}` (one brace-free reference) |
+| Pipedream expression body → `SyntaxError: Unexpected end of input` | evaluator choked | Inline expression `{{ {"a":{"b":x}} }}` — the object's trailing `}}` collides with the expression's own closing `}}`, so it terminates early. Same cure: move braces into a Node code step, reference `$return_value` |
+| Pipedream HTTP body → GitHub `422 "nil is not an object"` | body empty | (a) reference name wrong — the code step auto-named itself **`code`**, not the `build_payload` I assumed → `{{steps.code.$return_value}}`; (b) upstream step never Tested, so its `$return_value` was empty (testing a downstream step uses upstream's *last* output). **Test the code step first**, then the HTTP step |
+| Pipedream: real upload didn't trigger anything | works via Test, silent live | workflow was never **Deployed**. Edit/test mode only replays the *captured* event; live Drive uploads fire only after **Deploy** |
 
 ---
 
@@ -780,57 +785,107 @@ rebuilds this by hand so you know what it was doing.
 1. https://pipedream.com → sign up (free tier is enough) → **New workflow**.
 2. Trigger: search **Google Drive**, pick the *instant* new-file trigger.
 
-   > **⚠ VERIFY:** exact trigger name in the current UI (historically **"New Files
-   > (Instant)"**). "Instant" is the property that matters — it means webhook/watch-based
-   > true push. Avoid any trigger described as polling/schedule-based; using one would
-   > silently violate the lab's no-polling requirement.
+   > **✓ VERIFIED (2026-07-18):** the trigger is **"New Files (Instant)"** — confirmed by
+   > the config page showing "Instant" and contrasting itself against the polling "New Files
+   > (Shared Drive)" variant. "Instant" = webhook/watch-based true push (what we want).
+   > A separate note on that page warns Shared Drives use polling and can be delayed —
+   > irrelevant here because our folder is in **My Drive**, not a Shared Drive.
 
 3. Connect the Google account that owns `drive-ci-inbox` (OAuth consent dance — this is
    the human sign-in the SA exists to avoid; fine here because Pipedream is user-facing).
-4. Configure the trigger to watch the `drive-ci-inbox` folder specifically.
-5. Generate a test event: upload a file to the folder; inspect the emitted event in the
-   Pipedream UI and **note the JSON paths for the file's name and id** (you'll reference
-   them in the next step; the exporter shows copyable paths like
-   `steps.trigger.event.<something>.name`).
+   Note: Pipedream watches **as you**; the CI runner downloads **as the SA robot** — two
+   separate Google identities, each doing its own job.
+4. Configure the trigger: **Drive = My Drive**, **Folders = `drive-ci-inbox`** (scoping to
+   the folder means only inbox uploads fire the workflow — tighter blast radius). Leave the
+   optional fields (Include Subfolders, etc.) unchecked.
+5. Generate a test event: upload a file to the folder; **Select event** to inspect it. The
+   name path is the **flat** `steps.trigger.event.name` (not nested — the doc originally
+   guessed `event.<something>.name`; reality is simpler). id = `steps.trigger.event.id`.
+   The event is the full Drive file record: `name`, `id`, `size`, `mimeType`, `parents`,
+   `originalFilename` (pre-upload name — differs from `name` if renamed in Drive), etc.
 
 ### 4.2 Store the PAT in Pipedream
 
-Pipedream project → **Environment variables** (or workflow-level env) → add
-`DRIVE_PAT` = the token. Same principle as everywhere: config UI / env store, never
-hard-coded in step code.
+**Key idea — each executor has its own environment.** Pipedream runs *in the cloud*; its
+servers fire the dispatch, not your laptop. So the PAT must live in **Pipedream's** env
+store, not in your local `.env.txt` (which only your laptop's shell reads). Three separate
+homes for credentials, each read only by the executor that runs the code: laptop ←
+`.env.txt`; Pipedream ← its Settings UI; Actions runner ← repo secrets/vars.
 
-### 4.3 Add the dispatch step
+Reuse the Phase-2 PAT or (better hygiene) mint a **dedicated** fine-grained PAT so you can
+revoke Pipedream's access independently. Fine-grained PAT for the dispatch endpoint needs:
+**Only select repositories → `drive-ci-lab`**, **Repository permissions → Contents:
+Read and write** (that's the permission `POST /dispatches` requires), everything else No
+access. Then Pipedream → **Settings → Environment Variables** → add
+`DRIVE_PAT_PIPEDREAM` = the token. Reference it downstream as
+`{{process.env.DRIVE_PAT_PIPEDREAM}}`. Never paste the raw token into a step.
 
-Add a step after the trigger — either the built-in **HTTP request** action or a small
-Node code step. HTTP-action config (mirror of our curl, field by field):
+### 4.3 Add the dispatch step (what actually worked — read the gotcha)
+
+The generic **"Send any HTTP Request"** action. Config:
 
 - Method: `POST`
 - URL: `https://api.github.com/repos/anden-karlsson/drive-ci-lab/dispatches`
-- Headers: `Accept: application/vnd.github+json`,
-  `Authorization: Bearer {{process.env.DRIVE_PAT}}`,
-  `X-GitHub-Api-Version: 2022-11-28`
-- Body (JSON):
+- **Auth tab: None** (put auth in Headers instead — using *both* the Auth tab's Bearer
+  option AND a manual header sends two `Authorization` headers → conflict; pick one).
+- Headers (two are all you need):
+  - `Authorization: Bearer {{process.env.DRIVE_PAT_PIPEDREAM}}`
+  - `User-Agent: pipedream/1` (**required** — GitHub rejects API calls with no User-Agent
+    → 403). `Accept: application/vnd.github+json` is optional here: `/dispatches` returns
+    204 with no body, so the response-format header does nothing.
 
-  ```json
-  {
-    "event_type": "drive-upload",
-    "client_payload": {
-      "file_name": "{{steps.trigger.event.<name path from 4.1.5>}}",
-      "file_id": "{{steps.trigger.event.<id path from 4.1.5>}}"
-    }
-  }
-  ```
+**Body — do NOT hand-type JSON with `{{ }}` inside it.** Pipedream's template engine
+mis-counts braces when literal JSON `{ }` and template `{{ }}` mix, and silently drops a
+closing brace → GitHub 422 *"... is not an object"*. Both the raw-body and inline-expression
+forms failed this way (raw ate a `}`; the expression's nested `}}` collided with the
+expression's own closing `}}` → "Unexpected end of input"). **The robust fix: build the
+object in a Node code step, then reference it brace-free.**
 
-The `{{ ... }}` moustaches are Pipedream's template substitution — conceptually identical
-to GitHub's `${{ }}`: evaluated by the platform before the request is sent. Test the step
-(expect 204, same as curl), then **Deploy** the workflow.
+1. Add a **Node.js code step** between trigger and HTTP (it auto-names itself **`code`** —
+   note that, the reference must match the real name, *not* a name you assumed):
 
-### 4.4 ✅ CHECKPOINT 4 (milestone 1)
+   ```js
+   export default defineComponent({
+     async run({ steps }) {
+       return {
+         event_type: "drive-upload",
+         client_payload: { file_name: steps.trigger.event.name },
+       };
+     },
+   });
+   ```
+
+2. HTTP **Body** (custom expression) = a single brace-free reference:
+
+   ```
+   {{steps.code.$return_value}}
+   ```
+
+   Now the JSON braces live in real JavaScript (step 1) and the body field holds one
+   variable — nothing for either parser to miscount. Pipedream serializes the object to JSON.
+
+**Test order matters:** test the **`code`** step first (so its `$return_value` is populated
+— testing a downstream step uses upstream steps' *last* output; an untested code step →
+empty body → 422 *"nil is not an object"*). Confirm its Exports show
+`{event_type, client_payload:{file_name}}`, *then* test the HTTP step (expect **204**),
+then **Deploy**.
+
+204 ≠ done — it only proves *delivery*. Confirm the actual CI run with `gh run list
+--workflow drive.yml` (fresh `repository_dispatch` row) and check its log downloaded the
+right file.
+
+### 4.4 ✅ CHECKPOINT 4 (milestone 1) — PASSED 2026-07-18
 
 Upload a fresh file to `drive-ci-inbox`. Within seconds: Pipedream shows an execution, and
 `gh run list` shows a new `repository_dispatch` run. Pull its log; it downloaded the file
 you just uploaded. **The full event chain is live: upload → push notification → relay →
 dispatch → runner → download.**
+
+**Passed:** run `29653478535` downloaded `Bygma AB-bokslut-2024-12.pdf` (2,619,318 bytes)
+seconds after a real upload — no curl, no Test button. Notably robust: a **filename with
+spaces** (survived because `drive.yml` quotes `"${FILE_NAME}"`) and a real **2.6 MB binary
+PDF**. Reminder: a Pipedream workflow only fires on live uploads once **Deployed** — in
+edit/test mode it just replays the captured event.
 
 ### 4.5 The burst test — watch the pending slot lose events
 
