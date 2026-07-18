@@ -429,8 +429,48 @@ External HTTP request → GitHub event system → fresh VM → our data. The ske
 | still not found after re-upload | `no file named 'test3.csv'` but file visibly there | file's real name was `test3` — **Windows Explorer hides extensions**, and Drive reports `text/csv` from content-sniffing regardless of name → rename in Drive; enable View → "File name extensions" in Explorer |
 | suspected sharing failure | (false alarm) | unshared folders DO fail silently as empty results — but the authoritative test is querying **as the SA** (diagnostic script below), not secondary views; the owner's share dialog is ground truth for the ACL |
 | SA key still `untracked` after adding to `.gitignore` | file not ignored | two separate bugs, both silent: (a) `echo`ing two patterns created one mashed line `drive-ci-test*.venv/` matching nothing; (b) **`.gitignore` has no inline comments** — `pattern  # note` is read literally, and trailing spaces are significant. Every pattern gets its own bare line; comments on their own lines. **Always verify with `git status` that the file disappears** — a dead pattern looks identical to a working one |
+| CI log shows `$***FILE_NAME***` (`{`/`}` masked everywhere) | over-masking noise | `GDRIVE_SA_KEY` stored as **pretty-printed** JSON; GitHub masks multi-line secrets **line by line**, so lone `{` / `}` lines became masked values → every brace in every log becomes `***`. Cosmetic. Fix: store minified — `jq -c . ~/drive-ci-test-sa.json \| gh secret set GDRIVE_SA_KEY` |
+| log lines appeared **twice** | "did it run twice?!" | No — the logs zip stores each step in **two** members: the per-step file (`process/5_download….txt`) AND the whole-job rollup (`0_process.txt`). `unzip -p` dumps **all** members concatenated, so `grep` matches both copies (the invisible `﻿` BOM between blocks is the file seam). Timestamps were microsecond-identical + same run id → one run. Target one member: `unzip -p logs.zip "process/5_download*"` |
+| `GDRIVE_FOLDER_ID: 1wLTcLE…` fully visible in logs | "is this a leak?" | **No.** A Drive folder id is an *address, not a key* — knowing it grants no access; the folder is shared only to the SA email, and the *private key* (`GDRIVE_SA_KEY`) is what's masked. This is by design: stored as a **variable** (never masked) not a **secret** (masked). Only ever panic if the **contents of the SA key** appear unmasked. Caveat: an "anyone-with-link"–shared folder *would* make the id sensitive |
 
 ---
+
+### 5.1 Reading Actions logs — what the archive actually is
+
+Insights from dissecting run `29618408218`'s logs by hand:
+
+- **These *are* the official logs.** `gh api repos/OWNER/REPO/actions/runs/<run_id>/logs`
+  hits GitHub's real archive endpoint (302 → signed URL → zip). It is **byte-identical** to
+  the browser's *Download log archive* button. Three doors, one archive: the live console
+  (streams while running) → freezes into → the downloadable zip → same bytes via the API.
+- **Secrets are masked *in the stored archive itself*,** on GitHub's side, as the log is
+  written. So "official" ≠ "raw" — you can never re-download to unmask. That's the point:
+  the permanent record never contains `GDRIVE_SA_KEY`.
+- **The zip's anatomy** (`unzip -l logs.zip`):
+  - `0_process.txt` — the **whole-job rollup**: every step concatenated into one file.
+    This is what the *job-page* download gives you (a single flat file). It is a *superset*,
+    not "missing steps."
+  - `process/N_<step name>.txt` — one file **per step**, split out. Names match the browser
+    step names exactly (they both come from your `name:` fields). This split is what the
+    *run-page* `⋯` → *Download log archive* gives you.
+  - `process/system.txt` — internal runner diagnostics, not shown as a UI step.
+  - Step numbers have **gaps** (…5, 9, 10) and include `Post Run …` steps you didn't write:
+    actions like `checkout`/`setup-python` register **cleanup that runs after the job**.
+  - `1980-00-00` timestamps are the zip epoch default (GitHub doesn't set real ones) — not
+    corruption.
+- **run id ≠ job id.** A *run* (`29618408218`) contains one or more *jobs*, each with its own
+  id (`80213180057`). The job-page download names the file after the **job**, so the number
+  differs from the run id — same run, addressed one level deeper. URL shows both:
+  `…/runs/<run_id>/job/<job_id>`.
+- **Browser ↔ zip map** (open `…/actions/runs/<run_id>`, click the `process` job):
+  each expandable step in the UI = one `process/N_*.txt`; expanding *all* of them ≈
+  `0_process.txt`.
+- **Worth a close read once:** the **Set up job** step (reveals the exact runner image, the
+  fresh-VM-per-run model, `GITHUB_TOKEN` permissions, available secrets/vars) and **your own
+  step**. Skim checkout/pip (that's just reading pip). The rewarding exercise: trace one
+  value (`test3.csv`) through every line it appears in and explain why it's `***`-masked in
+  the *command echo* but plaintext in your `echo`'s *stdout* (masking hits registered secret
+  *values*; the filename isn't a secret, so runtime stdout passes through).
 
 ---
 
