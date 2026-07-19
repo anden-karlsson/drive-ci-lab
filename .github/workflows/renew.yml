@@ -1,0 +1,22 @@
+name: renew-watch
+
+on:
+  schedule:
+    - cron: "0 6 * * 1,4"   # Mon & Thu 06:00 UTC — comfortably inside the 1-week TTL
+  workflow_dispatch: {}      # manual "Run workflow" button for testing
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install google-api-python-client google-auth
+      - name: re-register the Drive watch channel
+        env:
+          FUNCTION_URL: ${{ vars.FUNCTION_URL }}
+          CHANNEL_TOKEN: ${{ secrets.CHANNEL_TOKEN }}
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: python relay/register_watch.py
