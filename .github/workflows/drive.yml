@@ -17,11 +17,14 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install google-api-python-client google-auth
-      - name: download file from Drive
+      - name: download files from Drive
         env:
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           GDRIVE_FOLDER_ID: ${{ vars.GDRIVE_FOLDER_ID }}
-          FILE_NAME: ${{ github.event.client_payload.file_name }}
+          FILE_NAMES_JSON: ${{ toJSON(github.event.client_payload.file_names) }}
         run: |
-          echo "processing: ${FILE_NAME}"
-          python run.py --download "${FILE_NAME}"
+          echo "batch: ${FILE_NAMES_JSON}"
+          echo "${FILE_NAMES_JSON}" | jq -r '.[]' | while IFS= read -r name; do
+            echo "── processing: ${name}"
+            python run.py --download "${name}"
+          done
