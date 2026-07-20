@@ -437,6 +437,8 @@ External HTTP request → GitHub event system → fresh VM → our data. The ske
 | Pipedream expression body → `SyntaxError: Unexpected end of input` | evaluator choked | Inline expression `{{ {"a":{"b":x}} }}` — the object's trailing `}}` collides with the expression's own closing `}}`, so it terminates early. Same cure: move braces into a Node code step, reference `$return_value` |
 | Pipedream HTTP body → GitHub `422 "nil is not an object"` | body empty | (a) reference name wrong — the code step auto-named itself **`code`**, not the `build_payload` I assumed → `{{steps.code.$return_value}}`; (b) upstream step never Tested, so its `$return_value` was empty (testing a downstream step uses upstream's *last* output). **Test the code step first**, then the HTTP step |
 | Pipedream: real upload didn't trigger anything | works via Test, silent live | workflow was never **Deployed**. Edit/test mode only replays the *captured* event; live Drive uploads fire only after **Deploy** |
+| relay function crashed on every ping: `requests.exceptions.InvalidHeader: ... 'Bearer github_pat_...\r'` | function found the file, dispatch threw before sending | the PAT had a trailing **`\r`**. `.env.txt` was authored on **Windows (CRLF)**; `source .env.txt` captured the `\r` into `$DRIVE_PAT`, which flowed into the Secret Manager secret and then the `Authorization` header — `requests` rejects CR in header values. Fix: re-store the secret stripped — `printf '%s' "$DRIVE_PAT" \| tr -d '\r\n' \| gcloud secrets versions add DRIVE_PAT_SECRET --data-file=-`, then **redeploy** (`:latest` is resolved at instance start, so a warm instance keeps the old value). Prevent recurrence: `sed -i 's/\r$//' .env.txt`. (curl tolerated the `\r` in Phase 2; `requests` does not — a latent bug that only surfaced here) |
+| relay dispatched via manual curl but not real upload | (diagnosis) | read the function's own logs: `gcloud functions logs read drive-relay --region europe-north1 --limit 30`. It shows each ping, whether a new file was found, and the dispatch outcome/stack trace — the decisive tool for the relay half |
 
 ---
 
@@ -1017,38 +1019,64 @@ Then register: `python relay/register_watch.py` → function logs
 ### 8.5 `renew.yml` — the subscription cron
 
 ```yaml
-name: renew-drive-watch
+name: renew-watch
 on:
   schedule:
-    - cron: "0 6 * * 1"    # Mondays 06:00 UTC — inside the verified channel TTL
-  workflow_dispatch:        # manual "run now" button for testing
+    - cron: "0 6 * * 1,4"   # Mon & Thu 06:00 UTC — buffer inside the 1-week channel TTL
+  workflow_dispatch: {}      # manual "run now" button for testing
 jobs:
   renew:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.13"}
+        with:
+          python-version: "3.13"
       - run: pip install google-api-python-client google-auth
-      - env:
-          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+      - name: re-register the Drive watch channel
+        env:
+          FUNCTION_URL: ${{ vars.FUNCTION_URL }}
           CHANNEL_TOKEN: ${{ secrets.CHANNEL_TOKEN }}
-          RELAY_URL: ${{ vars.RELAY_URL }}
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
         run: python relay/register_watch.py
 ```
 
-Cron syntax: five fields — minute hour day-of-month month day-of-week; `0 6 * * 1` =
-06:00 UTC every Monday. `workflow_dispatch` adds a manual trigger button (`gh workflow
-run renew-drive-watch`) so you can test renewal without waiting a week. Note GitHub cron
-is best-effort (may run minutes late) — fine for renewal, another reason it must never be
-the *detection* mechanism.
+Repo config it needs: `gh variable set FUNCTION_URL --body "<cloudfunctions URL>"`,
+`gh secret set CHANNEL_TOKEN --body "<token>"` (use `--body` so no CRLF sneaks in — see the
+PAT gotcha), and `GDRIVE_SA_KEY` (already a repo secret from Phase 3, reused). Env var names
+must match exactly what `register_watch.py` reads (`FUNCTION_URL`, `CHANNEL_TOKEN`,
+`GDRIVE_SA_KEY`).
 
-### 8.6 ✅ CHECKPOINT 5 (milestone 2)
+Cron syntax: five fields — minute hour day-of-month month day-of-week; `0 6 * * 1,4` =
+06:00 UTC every Monday and Thursday. **Why twice-weekly, not weekly:** the channel TTL is
+exactly 7 days and GitHub cron is *best-effort* (can run late/skip under load) — a once-a-week
+job that slips could let the channel expire first (silent death). Two runs = ~3–4 day max
+gap, safe buffer. Overlap is harmless: each renewal mints a new channel, old ones expire, and
+`main.py` dedupes by file id. `workflow_dispatch` adds a manual trigger (`gh workflow run
+renew-watch`) to test without waiting. Best-effort timing is exactly why the cron must never
+be the *detection* mechanism — detection stays pure push.
+
+### 8.6 ✅ CHECKPOINT 5 (milestone 2) — PASSED 2026-07-19
 
 Upload a file → `gcloud functions logs read drive-relay` shows the notification arriving
 and the dispatch firing → `gh run list` shows the run → its log shows the download.
-Re-run the Phase 4.5 burst test and compare: the changes-feed query should process every
-file even when GitHub cancels intermediate runs.
+
+**Passed:** two proofs. (a) After the CRLF-PAT fix, a manual `X-Goog-Resource-State: change`
+poke → `dispatched 1 file(s)` → run `29688894766` downloaded `relay-test.md`. (b) The
+autonomous proof: uploaded `relay-test2.md` to Drive with **no curl** → Google's real push
+→ run `29692267715` downloaded it (92 bytes). Renewal verified: `gh workflow run
+renew-watch` registered a fresh channel from a runner (expires 1 week out).
+
+> **Note on the implementation vs. the §8.0/§8.2 plan:** we pull with **`files.list` +
+> a "seen ids" set in GCS**, not the changes feed. Reason: the folder is shared *with* the
+> SA (lives in the owner's My Drive), and whether shared-with-me items reliably surface in a
+> service account's changes feed is uncertain — whereas `files.list` on the folder is the
+> exact query run.py already proved. The watch is still `changes.watch` (only that fires on
+> new children); `files.list` is just how we answer the ping. Push-to-pull principle intact.
+> First ping records a **baseline** (existing files) and dispatches nothing; only files
+> added afterward are "new". Dispatch is **batched** (one dispatch, a `file_names` list) and
+> `drive.yml` loops over it with `jq` — so a burst is one run that downloads everything, the
+> Phase-4.5 loss fixed by construction.
 
 ---
 

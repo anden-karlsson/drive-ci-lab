@@ -42,7 +42,7 @@ for when they get stuck. Keep both files updated: status here; walkthrough corre
    Pipedream owns watch-channel renewal) → HTTP step POSTing repository_dispatch with the
    PAT, file id/name in `client_payload`. Milestone 1 PASSED. **← WE ARE HERE** — still to do:
    the multi-file **burst test** (§4.5) to observe concurrency losing events.
-5. **Relay B: self-hosted Cloud Function (the internals)** — pause Pipedream;
+5. ✅ **Relay B: self-hosted Cloud Function (the internals)** — pause Pipedream;
    `relay/main.py` (HTTP function: validate `X-Goog-Channel-Token`, ignore `sync`,
    push-to-pull via changes/files query, debounce, POST dispatch) deployed with `gcloud`;
    `relay/register_watch.py` registers the Drive watch channel; `renew.yml` (weekly cron)
@@ -84,8 +84,20 @@ minimums) must be verified against docs at that phase, not asserted.
   name — both fine). Gotchas (all in STUDY §5): Pipedream brace-eating in JSON bodies →
   build payload in a code step; env lives in Pipedream cloud not laptop `.env.txt`; must
   Deploy for live uploads; step auto-named `code`; test upstream step before downstream.
-- **Next action:** Phase 4 §4.5 **burst test** — upload 3–4 files at once, watch
-  `gh run list` show the concurrency lane drop middle events (motivates Phase 5).
+- Phase 4 §4.5 burst test done (2026-07-18): 3 files uploaded, runs 29654146216/…252/…303 —
+  middle run cancelled (event loss confirmed, "keep first + newest, drop the pending middle").
+- Phase 5 complete (2026-07-19): self-hosted relay live. GCP Cloud Function `drive-relay`
+  (gen2, europe-north1, runs as `drive-ci-test` SA), secrets in Secret Manager
+  (`GDRIVE_SA_KEY_SECRET`, `DRIVE_PAT_SECRET`), state in GCS bucket `drive-ci-test-relay-state`
+  (`seen_ids.json`). Design: `files.list` + seen-ids diff (not the changes feed — shared-with-SA
+  folder), batched `file_names` dispatch, `drive.yml` loops with `jq`. `register_watch.py`
+  registers `changes.watch` (1-week TTL); `renew.yml` re-registers Mon & Thu. Milestone 2
+  passed autonomously (run 29692267715 downloaded `relay-test2.md`, no curl). Key gotcha:
+  Windows CRLF in `.env.txt` put a trailing `\r` in the PAT → `requests` rejected the header
+  (STUDY §5).
+- **Next action:** Phase 6 (STUDY.md §9) — wrap-up + **teardown checklist** (watch channel,
+  Cloud Function, GCS bucket, secrets, SA key, both PATs, Pipedream workflow, repo) so no
+  orphaned credentials or billable resources remain. **← WE ARE HERE**
 
 This file is part of the lab: update the status section as phases complete; delete the repo
 (and this file with it) at teardown.
